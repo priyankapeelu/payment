@@ -21,8 +21,8 @@ from prometheus_client import Counter, Histogram
 app = Flask(__name__)
 app.logger.setLevel(logging.INFO)
 
-CART = os.getenv('CART_HOST', 'cart')
-CART_PORT = os.getenv('CART_PORT', 8080)
+payment = os.getenv('payment_HOST', 'payment')
+payment_PORT = os.getenv('payment_PORT', 8080)
 USER = os.getenv('USER_HOST', 'user')
 USER_PORT = os.getenv('USER_PORT', 8080)
 PAYMENT_GATEWAY = os.getenv('PAYMENT_GATEWAY', 'https://google.com/')
@@ -31,7 +31,7 @@ PAYMENT_GATEWAY = os.getenv('PAYMENT_GATEWAY', 'https://google.com/')
 PromMetrics = {}
 PromMetrics['SOLD_COUNTER'] = Counter('sold_count', 'Running count of items sold')
 PromMetrics['AUS'] = Histogram('units_sold', 'Avergae Unit Sale', buckets=(1, 2, 5, 10, 100))
-PromMetrics['AVS'] = Histogram('cart_value', 'Avergae Value Sale', buckets=(100, 200, 500, 1000, 2000, 5000, 10000))
+PromMetrics['AVS'] = Histogram('payment_value', 'Avergae Value Sale', buckets=(100, 200, 500, 1000, 2000, 5000, 10000))
 
 
 @app.errorhandler(Exception)
@@ -56,15 +56,15 @@ def metrics():
 @app.route('/pay/<id>', methods=['POST'])
 def pay(id):
     app.logger.info('payment for {}'.format(id))
-    cart = request.get_json()
-    app.logger.info(cart)
+    payment = request.get_json()
+    app.logger.info(payment)
 
     anonymous_user = True
 
     # add some log info to the active trace
     span = ot.tracer.active_span
     span.log_kv({'id': id})
-    span.log_kv({'cart': cart})
+    span.log_kv({'payment': payment})
 
     # check user exists
     try:
@@ -75,16 +75,16 @@ def pay(id):
     if req.status_code == 200:
         anonymous_user = False
 
-    # check that the cart is valid
-    # this will blow up if the cart is not valid
+    # check that the payment is valid
+    # this will blow up if the payment is not valid
     has_shipping = False
-    for item in cart.get('items'):
+    for item in payment.get('items'):
         if item.get('sku') == 'SHIP':
             has_shipping = True
 
-    if cart.get('total', 0) == 0 or has_shipping == False:
-        app.logger.warn('cart not valid')
-        return 'cart not valid', 400
+    if payment.get('total', 0) == 0 or has_shipping == False:
+        app.logger.warn('payment not valid')
+        return 'payment not valid', 400
 
     # dummy call to payment gateway, hope they dont object
     try:
@@ -98,30 +98,30 @@ def pay(id):
 
     # Prometheus
     # items purchased
-    item_count = countItems(cart.get('items', []))
+    item_count = countItems(payment.get('items', []))
     PromMetrics['SOLD_COUNTER'].inc(item_count)
     PromMetrics['AUS'].observe(item_count)
-    PromMetrics['AVS'].observe(cart.get('total', 0))
+    PromMetrics['AVS'].observe(payment.get('total', 0))
 
     # Generate order id
     orderid = str(uuid.uuid4())
-    queueOrder({ 'orderid': orderid, 'user': id, 'cart': cart })
+    queueOrder({ 'orderid': orderid, 'user': id, 'payment': payment })
 
     # add to order history
     if not anonymous_user:
         try:
             req = requests.post('http://{user}:{userPort}/order/{id}'.format(user=USER, userPort=USER_PORT, id=id),
-                    data=json.dumps({'orderid': orderid, 'cart': cart}),
+                    data=json.dumps({'orderid': orderid, 'payment': payment}),
                     headers={'Content-Type': 'application/json'})
             app.logger.info('order history returned {}'.format(req.status_code))
         except requests.exceptions.RequestException as err:
             app.logger.error(err)
             return str(err), 500
 
-    # delete cart
+    # delete payment
     try:
-        req = requests.delete('http://{cart}:{cartPort}/cart/{id}'.format(cart=CART, cartPort=CART_PORT, id=id));
-        app.logger.info('cart delete returned {}'.format(req.status_code))
+        req = requests.delete('http://{payment}:{paymentPort}/payment/{id}'.format(payment=payment, paymentPort=payment_PORT, id=id));
+        app.logger.info('payment delete returned {}'.format(req.status_code))
     except requests.exceptions.RequestException as err:
         app.logger.error(err)
         return str(err), 500

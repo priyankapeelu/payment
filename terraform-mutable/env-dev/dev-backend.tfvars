@@ -1,3 +1,3 @@
 bucket = "terraformd63"
-key    = "mutable/cart/terraform.tfstate"
+key    = "mutable/payment/terraform.tfstate"
 region = "us-east-1"
